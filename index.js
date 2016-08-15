@@ -5,73 +5,80 @@ var rs = require('replacestream');
 var istextorbinary = require('istextorbinary');
 
 module.exports = function(search, replacement, options) {
-  return new Transform({
-    objectMode: true,
-    transform: function(file, enc, callback) {
-      if (file.isNull()) {
-        return callback(null, file);
-      }
+	return new Transform({
+		objectMode: true,
+		transform: function(file, enc, callback) {
+			if (file.isNull()) {
+				return callback(null, file);
+			}
 
-      function doReplace() {
-        if (file.isStream()) {
-          file.contents = file.contents.pipe(rs(search, replacement));
-          return callback(null, file);
-        }
+			var path = file.path;
+			if(typeof options != "undefined" && typeof options.root != "undefined"){
+				path = path.replace(options.root, "");
+			}
 
-        if (file.isBuffer()) {
-          if (search instanceof RegExp) {
-            file.contents = new Buffer(String(file.contents).replace(search, replacement));
-          }
-          else {
-            var chunks = String(file.contents).split(search);
+			function doReplace() {
+				if (file.isStream()) {
+					file.contents = file.contents.pipe(rs(search, function(){
+						return replacement.apply(null, [path].concat(arguments));
+					}));
+					return callback(null, file);
+				}
 
-            var result;
-            if (typeof replacement === 'function') {
-              // Start with the first chunk already in the result
-              // Replacements will be added thereafter
-              // This is done to avoid checking the value of i in the loop
-              result = [ chunks[0] ];
+				if (file.isBuffer()) {
+					if (search instanceof RegExp) {
+						file.contents = new Buffer(String(file.contents).replace(search, function(){
+							return replacement.apply(null, [path].concat(arguments));
+						}));
+					} else {
+						var chunks = String(file.contents).split(search);
 
-              // The replacement function should be called once for each match
-              for (var i = 1; i < chunks.length; i++) {
-                // Add the replacement value
-                result.push(replacement(search));
+						var result;
+						if (typeof replacement === 'function') {
+							// Start with the first chunk already in the result
+							// Replacements will be added thereafter
+							// This is done to avoid checking the value of i in the loop
+							result = [chunks[0]];
 
-                // Add the next chunk
-                result.push(chunks[i]);
-              }
+							// The replacement function should be called once for each match
+							for (var i = 1; i < chunks.length; i++) {
+								// Add the replacement value
+								result.push(replacement(search));
 
-              result = result.join('');
-            }
-            else {
-              result = chunks.join(replacement);
-            }
+								// Add the next chunk
+								result.push(chunks[i]);
+							}
 
-            file.contents = new Buffer(result);
-          }
-          return callback(null, file);
-        }
+							result = result.join('');
+						} else {
+							result = chunks.join(replacement);
+						}
 
-        callback(null, file);
-      }
+						file.contents = new Buffer(result);
+					}
+					return callback(null, file);
+				}
 
-      if (options && options.skipBinary) {
-        istextorbinary.isText(file.path, file.contents, function(err, result) {
-          if (err) {
-            return callback(err, file);
-          }
+				callback(null, file);
+			}
 
-          if (!result) {
-            callback(null, file);
-          } else {
-            doReplace();
-          }
-        });
+			if (options && options.skipBinary) {
+				istextorbinary.isText(file.path, file.contents, function(err, result) {
+					if (err) {
+						return callback(err, file);
+					}
 
-        return;
-      }
+					if (!result) {
+						callback(null, file);
+					} else {
+						doReplace();
+					}
+				});
 
-      doReplace();
-    }
-  });
+				return;
+			}
+
+			doReplace();
+		}
+	});
 };
